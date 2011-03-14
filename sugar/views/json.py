@@ -2,6 +2,15 @@
 
 from django.http import HttpResponse
 from django.utils import simplejson
+from django.core.serializers import serialize
+from django.utils.simplejson import loads, JSONEncoder
+
+
+class DjangoJSONEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, QuerySet):
+            return loads(serialize('json', obj))
+        return JSONEncoder.default(self,obj)
 
 
 class JsonResponse(HttpResponse):
@@ -9,7 +18,7 @@ class JsonResponse(HttpResponse):
     HttpResponse descendant, which return response with ``application/json`` mimetype.
     """
     def __init__(self, data):
-        super(JsonResponse, self).__init__(content=simplejson.dumps(data), mimetype='application/json')
+        super(JsonResponse, self).__init__(content=simplejson.dumps(data, cls=DjangoJSONEncoder), mimetype='application/json')
 
 def as_json(errors):
     return dict((k, map(unicode, v)) for k, v in errors.items())
@@ -36,3 +45,5 @@ def ajax_request(func):
     wrapper.__module__ = func.__module__
     wrapper.__doc__ = func.__doc__
     return wrapper
+
+

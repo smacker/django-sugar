@@ -18,6 +18,7 @@ setup(
         'sugar.templatetags',
         'sugar.views',
         'sugar.widgets',
+        'sugar.utils',
     ],
     classifiers=[
         'Development Status :: 2 - Alpha',

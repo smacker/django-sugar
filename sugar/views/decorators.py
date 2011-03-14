@@ -1,10 +1,19 @@
 # -*- mode: python; coding: utf-8; -*-
 from django.shortcuts import render_to_response
 from django.template import RequestContext
+from django.template import loader
 
 from sugar.views.json import JsonResponse
 
-def render_to(template):
+from django.utils.translation import ugettext_lazy as _
+
+try:
+    from functools import wraps
+except ImportError:
+    from django.utils.functional import wraps
+
+
+def render_to(template_path):
     """
     Decorator for Django views that sends returned dict to render_to_response
     function with given template and RequestContext as context instance.
@@ -34,12 +43,21 @@ def render_to(template):
         def wrapper(request, *args, **kw):
             output = func(request, *args, **kw)
             if isinstance(output, (list, tuple)):
-                return render_to_response(output[1], output[0],
-                                          RequestContext(request))
+                template = output[1]
+                output_dict = output[0]
             elif isinstance(output, dict):
-                return render_to_response(template, output,
+                output_dict = output
+                if 'TEMPLATE' in output:
+                    template = output.pop('TEMPLATE')
+                else:
+                    template = template_path
+            else:
+                return output
+            if request.GET.has_key('inline'):
+                template_parts = template.rsplit('/', 1)
+                template = template_parts[0] + '/inline/' + template_parts[1]
+            return render_to_response(template, output_dict,
                                           RequestContext(request))
-            return output
         wrapper.__name__ = func.__name__
         wrapper.__module__ = func.__module__
         wrapper.__doc__ = func.__doc__
@@ -88,3 +106,83 @@ def ajax_request(func):
     wrapper.__module__ = func.__module__
     wrapper.__doc__ = func.__doc__
     return wrapper
+
+
+def render_from(template_path):
+    def decorator(func):
+        def wrapper(request, *args, **kwargs):
+            output = func(request, *args, **kwargs)
+            if not isinstance(output, dict):
+                return output
+            if 'TEMPLATE' in output:
+                template = output.pop('TEMPLATE')
+            else:
+                template = template_path
+            kwargs = {'context_instance': RequestContext(request)}
+            return loader.render_to_string(template, output, **kwargs)
+        return wrapper
+    return decorator
+
+
+def default_context(request, title=_('Are you sure?'), text='',\
+                        submit=_('Confirm'), back=None, extra=dict()):
+    context = {
+           'title': title,
+           'text': text,
+           'submit': submit,
+           'back': back,
+           }
+
+    context.update(extra)
+
+    return RequestContext(request, context)
+
+def confirm_required(template_name='confirm.html', context_creator=default_context, key='__confirm__'):
+    """
+    http://djangosnippets.org/snippets/1922/
+
+    Decorator for views that need confirmation page. For example, delete
+    object view. Decorated view renders confirmation page defined by template
+    'template_name'. If request.POST contains confirmation key, defined
+    by 'key' parameter, then original view is executed.
+
+    Context for confirmation page is created by function 'context_creator',
+    which accepts same arguments as decorated view.
+
+    Example
+    -------
+
+        def remove_file_context(request, id):
+            file = get_object_or_404(Attachment, id=id)
+            return RequestContext(request, {'file': file})
+
+        @confirm_required('remove_file_confirm.html', remove_file_context)
+        def remove_file_view(request, id):
+            file = get_object_or_404(Attachment, id=id)
+            file.delete()
+            next_url = request.GET.get('next', '/')
+            return HttpResponseRedirect(next_url)
+
+
+
+    Example of HTML template
+    ------------------------
+
+        <h1>Remove file {{ file }}?</h1>
+
+        <form method="POST" action="">
+            <input type="hidden" name="__confirm__" value="1" />
+            <input type="submit" value="delete"/> <a href="{{ file.get_absolute_url }}">cancel</a>
+        </form>
+
+    """
+    def decorator(func):
+        def inner(request, *args, **kwargs):
+            if request.POST.has_key(key):
+                return func(request, *args, **kwargs)
+            else:
+                context = context_creator and context_creator(request, *args, **kwargs) \
+                    or RequestContext(request)
+                return render_to_response(template_name, context)
+        return wraps(func)(inner)
+    return decorator
